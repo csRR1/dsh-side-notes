@@ -1,6 +1,6 @@
 {
   "name": "dsh-side-notes",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "DSH 旁注插件：不打断的收件箱 + 项目备忘 + 助手消息批注 + 旁问（本地快照 / 子会话查证）",
   "license": "MIT",
   "type": "module",

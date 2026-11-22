@@ -336,6 +336,28 @@ window.__ModuleLoader__.load({
                 ? { ...it, done: !it.done, updatedAt: Date.now() } : it),
             });
           },
+          editText(id, text) {
+            const t = String(text == null ? '' : text).trim();
+            const it = state.items.find((x) => x.id === id);
+            if (!it || it.text === t) return;
+            commit({
+              ...state,
+              items: state.items.map((x) => x.id === id
+                ? { ...x, text: t, updatedAt: Date.now() } : x),
+            });
+          },
+          addImages(id, imageIds) {
+            const ids = Array.isArray(imageIds) ? imageIds.filter((x) => !!x) : [];
+            if (!ids.length) return;
+            const it = state.items.find((x) => x.id === id);
+            if (!it) return;
+            const existing = Array.isArray(it.images) ? it.images : [];
+            commit({
+              ...state,
+              items: state.items.map((x) => x.id === id
+                ? { ...x, images: existing.concat(ids), updatedAt: Date.now() } : x),
+            });
+          },
           remove(id) {
             const it = state.items.find((x) => x.id === id);
             if (!it) return;
@@ -601,7 +623,19 @@ window.__ModuleLoader__.load({
           const [memoDraft, setMemoDraft] = useState('');
           const [pendingImages, setPendingImages] = useState([]); // imageId[]
           const [showDeleted, setShowDeleted] = useState(false);
+          const [editingMemoId, setEditingMemoId] = useState(null);
+          const [editingMemoText, setEditingMemoText] = useState('');
+          const editingCancelRef = useRef(false);
+          const editRef = useRef(null);
+          useEffect(() => {
+            const el = editRef.current;
+            if (!el) return;
+            el.style.height = 'auto';
+            el.style.height = el.scrollHeight + 'px';
+          }, [editingMemoId, editingMemoText]);
           const fileRef = useRef(null);
+          const attachFileRef = useRef(null);
+          const attachingMemoIdRef = useRef(null);
 
           const itemsRef = useRef(items);
           itemsRef.current = items;
@@ -797,6 +831,18 @@ window.__ModuleLoader__.load({
             }
           };
           const onPickFiles = (e) => { addFiles(e.target.files); if (fileRef.current) fileRef.current.value = ''; };
+          const onAttachFiles = async (e) => {
+            const files = Array.from(e.target.files || []).filter((f) => (f.type || '').indexOf('image/') === 0);
+            if (attachFileRef.current) attachFileRef.current.value = '';
+            const targetId = attachingMemoIdRef.current;
+            attachingMemoIdRef.current = null;
+            if (!targetId || !wsStore) return;
+            const ids = [];
+            for (const f of files) {
+              try { ids.push(await ingestImage(f)); } catch (err) { console.error('[side-notes] attach image failed', err); }
+            }
+            if (ids.length) wsStore.addImages(targetId, ids);
+          };
           const onPasteImages = (e) => {
             const items2 = e.clipboardData && e.clipboardData.items;
             if (!items2) return;
@@ -936,6 +982,7 @@ window.__ModuleLoader__.load({
                       placeholder: '记一条项目备忘…（Enter 保存，可粘贴/拖入图片）', style: inputStyle,
                     }),
                     h('input', { ref: fileRef, type: 'file', accept: 'image/*', multiple: true, style: { display: 'none' }, onChange: onPickFiles }),
+                    h('input', { ref: attachFileRef, type: 'file', accept: 'image/*', multiple: true, style: { display: 'none' }, onChange: onAttachFiles }),
                     h('button', { onClick: () => fileRef.current && fileRef.current.click(), title: '选择图片', style: iconBtnStyle, 'aria-label': '选择图片' }, '\uD83D\uDCF7'),
                     h('button', { onClick: onAddMemo, style: primaryBtnStyle }, '记下'),
                   ),
@@ -950,16 +997,41 @@ window.__ModuleLoader__.load({
                       ? h('div', { style: emptyStyle }, '还没有项目备忘。这里跨会话、跨标签页保存，写两条试试。')
                       : null,
 
-                    memoList.map((it) => h('div', { key: it.id, style: { ...itemStyle, opacity: it.done ? 0.5 : 1, alignItems: 'flex-start' } },
+                    memoList.map((it) => h('div', { key: it.id, style: { ...itemStyle, opacity: it.done ? 0.5 : 1, alignItems: 'flex-start', marginBottom: 3 } },
                       h('input', { type: 'checkbox', checked: !!it.done, onChange: () => wsStore.toggleDone(it.id), style: checkboxStyle, title: it.done ? '标记未完成' : '标记完成' }),
                       h('div', { style: memoItemBodyStyle },
-                        h('div', { style: { ...itemTextStyle, textDecoration: it.done ? 'line-through' : 'none' } }, it.text || '（仅图片）'),
+                        editingMemoId === it.id
+                          ? h('textarea', {
+                            ref: editRef,
+                            value: editingMemoText,
+                            onChange: (e) => setEditingMemoText(e.target.value),
+                            onKeyDown: (e) => {
+                              if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); editingCancelRef.current = false; wsStore.editText(it.id, editingMemoText); setEditingMemoId(null); }
+                              else if (e.key === 'Escape') { editingCancelRef.current = true; setEditingMemoId(null); }
+                            },
+                            onBlur: () => {
+                              if (editingCancelRef.current) { editingCancelRef.current = false; return; }
+                              wsStore.editText(it.id, editingMemoText);
+                              setEditingMemoId(null);
+                            },
+                            autoFocus: true,
+                            rows: 1,
+                            style: { width: '100%', boxSizing: 'border-box', padding: '4px 6px', borderRadius: 'var(--dsw-radius-sm)', border: '1px solid var(--dsw-alias-border-l3)', background: 'transparent', color: 'var(--dsw-alias-label-primary)', fontSize: 14, outline: 'none', fontFamily: 'var(--dsw-font-family)', lineHeight: 1.5, whiteSpace: 'pre-wrap', wordBreak: 'break-word', resize: 'none', minHeight: 28, overflow: 'hidden' },
+                          })
+                          : h('div', {
+                            style: { ...itemTextStyle, textDecoration: it.done ? 'line-through' : 'none', cursor: 'text' },
+                            title: '双击编辑',
+                            onDoubleClick: () => { setEditingMemoId(it.id); setEditingMemoText(it.text || ''); editingCancelRef.current = false; },
+                          }, it.text || '（仅图片）'),
                         it.images && it.images.length > 0 && h('div', { style: thumbRowStyle },
                           it.images.map((imgId) => h(ImageThumb, { key: imgId, imageId: imgId, size: 44, onSend: (id) => { sendImageToInput(sessionId, id, inputActions).catch((e) => console.error('[side-notes] send image failed', e)); } })),
                         ),
                       ),
-                      h('button', { onClick: () => insertToSession(it), title: '插入当前会话', style: textBtnStyle }, '插入'),
-                      h('button', { onClick: () => wsStore.remove(it.id), title: '删除', style: iconBtnStyle }, '\u00D7'),
+                      h('div', { style: { display: 'flex', flexDirection: 'column', gap: 6, flexShrink: 0, alignItems: 'stretch' } },
+                        h('button', { onClick: () => { attachingMemoIdRef.current = it.id; if (attachFileRef.current) attachFileRef.current.click(); }, title: '给这条备忘添加图片', style: { ...textBtnStyle, textAlign: 'center' } }, '加图'),
+                        h('button', { onClick: () => insertToSession(it), title: '插入当前会话', style: { ...textBtnStyle, textAlign: 'center' } }, '插入'),
+                        h('button', { onClick: () => wsStore.remove(it.id), title: '删除', style: { ...iconBtnStyle, textAlign: 'center', border: '1px solid var(--dsw-alias-border-l3)', borderRadius: 'var(--dsw-radius-sm)', width: 20, height: 20, boxSizing: 'border-box', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', padding: 0, alignSelf: 'center' } }, '\u00D7'),
+                      ),
                     )),
                   ),
 
