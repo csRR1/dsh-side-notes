@@ -171,6 +171,13 @@ window.__ModuleLoader__.load({
             items = items.map((it) => set.has(it.id) ? { ...it, status: 'delivered' } : it);
             persist(); emit();
           },
+          editText(id, text) {
+            const t = String(text == null ? '' : text).trim();
+            const it = items.find((x) => x.id === id);
+            if (!it || it.text === t) return;
+            items = items.map((x) => x.id === id ? { ...x, text: t } : x);
+            persist(); emit();
+          },
         };
         storeCache.set(sessionId, store);
       }
@@ -633,6 +640,18 @@ window.__ModuleLoader__.load({
             el.style.height = 'auto';
             el.style.height = el.scrollHeight + 'px';
           }, [editingMemoId, editingMemoText]);
+
+          // 收件箱条目原地编辑
+          const [editingNoteId, setEditingNoteId] = useState(null);
+          const [editingNoteText, setEditingNoteText] = useState('');
+          const noteEditCancelRef = useRef(false);
+          const noteEditRef = useRef(null);
+          useEffect(() => {
+            const el = noteEditRef.current;
+            if (!el) return;
+            el.style.height = 'auto';
+            el.style.height = el.scrollHeight + 'px';
+          }, [editingNoteId, editingNoteText]);
           const fileRef = useRef(null);
           const attachFileRef = useRef(null);
           const attachingMemoIdRef = useRef(null);
@@ -943,12 +962,37 @@ window.__ModuleLoader__.load({
                     ? h('div', { style: emptyStyle }, '还没有旁注。agent 干活时按 Alt+Enter 或点输入框旁的便签图标。')
                     : items.map((it) => h('div', { key: it.id, style: itemStyle },
                       h('span', { style: { ...dotStyle, background: statusMeta[it.status].color } }),
-                      h('span', { style: itemTextStyle },
-                        it.kind === 'annotate' && it.messageId
-                          ? h('span', { style: { color: 'var(--dsw-alias-label-secondary)', fontSize: 11, marginRight: 4, fontFamily: 'inherit' } }, '[↳' + anchorLabel(it.messageId) + '] ')
-                          : null,
-                        it.text,
-                      ),
+                      editingNoteId === it.id
+                        ? h('textarea', {
+                          ref: noteEditRef,
+                          value: editingNoteText,
+                          onChange: (e) => setEditingNoteText(e.target.value),
+                          onKeyDown: (e) => {
+                            if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); noteEditCancelRef.current = false; store.editText(it.id, editingNoteText); setEditingNoteId(null); }
+                            else if (e.key === 'Escape') { noteEditCancelRef.current = true; setEditingNoteId(null); }
+                          },
+                          onBlur: () => {
+                            if (noteEditCancelRef.current) { noteEditCancelRef.current = false; return; }
+                            store.editText(it.id, editingNoteText);
+                            setEditingNoteId(null);
+                          },
+                          autoFocus: true,
+                          rows: 1,
+                          style: { flex: 1, minWidth: 0, width: '100%', boxSizing: 'border-box', padding: '4px 6px', borderRadius: 'var(--dsw-radius-sm)', border: '1px solid var(--dsw-alias-border-l3)', background: 'transparent', color: 'var(--dsw-alias-label-primary)', fontSize: 14, outline: 'none', fontFamily: 'inherit', lineHeight: 1.5, whiteSpace: 'pre-wrap', wordBreak: 'break-word', resize: 'none', minHeight: 28, overflow: 'hidden' },
+                        })
+                        : h('span', {
+                          style: { ...itemTextStyle, cursor: it.status === 'delivered' ? 'default' : 'text' },
+                          title: it.status === 'delivered' ? '' : '双击编辑',
+                          onDoubleClick: () => {
+                            if (it.status === 'delivered') return;
+                            setEditingNoteId(it.id); setEditingNoteText(it.text || ''); noteEditCancelRef.current = false;
+                          },
+                        },
+                          it.kind === 'annotate' && it.messageId
+                            ? h('span', { style: { color: 'var(--dsw-alias-label-secondary)', fontSize: 11, marginRight: 4, fontFamily: 'inherit' } }, '[↳' + anchorLabel(it.messageId) + '] ')
+                            : null,
+                          it.text,
+                        ),
                       h('span', { style: metaStyle }, statusMeta[it.status].label),
                       it.status !== 'delivered' && wsStore && h('button', {
                         onClick: () => promoteToMemo(it), title: '提升为备忘', style: textBtnStyle,
